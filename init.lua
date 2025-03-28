@@ -58,6 +58,18 @@ local function RegisterActors()
 				itemData[itemName][who].bank = items[itemName].bank
 			end
 		end
+		for item, data in pairs(itemData) do
+			if type(data) == 'table' then
+				itemData[item].HasItem = false
+				for who, info in pairs(data) do
+					if type(info) ~= 'boolean' then
+						if info.inventory > 0 or info.bank > 0 then
+							itemData[item].HasItem = true
+						end
+					end
+				end
+			end
+		end
 		for itemName, v in pairs(itemData) do
 			if not TableContains(tracking, itemName) then
 				itemData[itemName] = nil
@@ -109,11 +121,23 @@ local function renderUI()
 		local leftWidth = 150
 		ImGui.BeginChild("ItemList", ImVec2(leftWidth, 0), bit32.bor(ImGuiChildFlags.ResizeX, ImGuiChildFlags.Border))
 		for _, item in ipairs(trackedItems) do
+			if itemData[item] ~= nil and itemData[item].HasItem then
+				ImGui.PushStyleColor(ImGuiCol.Text, colGreen)
+			else
+				ImGui.PushStyleColor(ImGuiCol.Text, colWhite)
+			end
 			if ImGui.Selectable(item, selectedItem == item) then
 				selectedItem = item
 			end
+			ImGui.PopStyleColor()
+			if ImGui.IsItemHovered() then
+				ImGui.BeginTooltip()
+				ImGui.TextColored(colYellow, item)
+				ImGui.Text("Right-click to remove")
+				ImGui.EndTooltip()
+			end
 			if ImGui.BeginPopupContextItem() then
-				if ImGui.MenuItem("Remove") then
+				if ImGui.MenuItem("Remove " .. item) then
 					removedItems[item] = true
 					needRemove = true
 					if selectedItem == item then selectedItem = nil end
@@ -127,22 +151,28 @@ local function renderUI()
 		ImGui.SameLine()
 		ImGui.BeginChild("ItemDataView", ImVec2(0, 0), ImGuiChildFlags.Border)
 		if selectedItem and itemData[selectedItem] then
-			ImGui.Text("Item: " .. selectedItem)
+			-- ImGui.Text("Item: ")
+			-- ImGui.SameLine()
+			ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0, 1, 1, 1))
+			ImGui.TextWrapped(selectedItem)
+			ImGui.PopStyleColor()
 			if ImGui.BeginTable("ItemTable", 3, bit32.bor(ImGuiTableFlags.Borders, ImGuiTableFlags.Resizable)) then
 				ImGui.TableSetupColumn("Character")
 				ImGui.TableSetupColumn("Inventory")
 				ImGui.TableSetupColumn("Bank")
 				ImGui.TableHeadersRow()
 				for char, data in pairs(itemData[selectedItem]) do
-					local colInv = (data.inventory or 0) > 0 and colYellow or colWhite
-					local colBank = (data.bank or 0) > 0 and colGreen or colWhite
-					ImGui.TableNextRow()
-					ImGui.TableSetColumnIndex(0)
-					ImGui.Text(char)
-					ImGui.TableSetColumnIndex(1)
-					ImGui.TextColored(colInv, tostring(data.inventory or 0))
-					ImGui.TableSetColumnIndex(2)
-					ImGui.TextColored(colBank, tostring(data.bank or 0))
+					if type(data) ~= 'boolean' then
+						local colInv = (data.inventory or 0) > 0 and colYellow or colWhite
+						local colBank = (data.bank or 0) > 0 and colGreen or colWhite
+						ImGui.TableNextRow()
+						ImGui.TableSetColumnIndex(0)
+						ImGui.Text(char)
+						ImGui.TableSetColumnIndex(1)
+						ImGui.TextColored(colInv, tostring(data.inventory or 0))
+						ImGui.TableSetColumnIndex(2)
+						ImGui.TextColored(colBank, tostring(data.bank or 0))
+					end
 				end
 				ImGui.EndTable()
 			end
