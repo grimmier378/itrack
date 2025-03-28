@@ -1,21 +1,24 @@
-local mq = require('mq')
-local ImGui = require('ImGui')
-local Actors = require('actors')
+local mq                = require('mq')
+local ImGui             = require('ImGui')
+local Actors            = require('actors')
 
-local mailboxName = "ItemTracker"
+local mailboxName       = "ItemTracker"
 local actor
-local trackedItems = {}
-local itemData = {}
-local showUI = true
-local saveFileName = mq.configDir .. "/itemtracker.lua"
-local mainWindowFlags = bit32.bor(ImGuiWindowFlags.None)
-local removedItems = {}
-local myName = mq.TLO.Me.CleanName()
+local trackedItems      = {}
+local itemData          = {}
+local showUI            = true
+local saveFileName      = mq.configDir .. "/itemtracker.lua"
+local mainWindowFlags   = bit32.bor(ImGuiWindowFlags.None)
+local removedItems      = {}
+local myName            = mq.TLO.Me.CleanName()
 
 -- variables for UI
-local tmpTxt = ""
-local needSave = false
-
+local tmpTxt            = ""
+local needSave          = false
+local Module            = {}
+local loadedExeternally = MyUI_ScriptName ~= nil
+Module.Name             = "iTrack"
+Module.IsRunning        = false
 local function saveTrackedItems()
 	mq.pickle(saveFileName, { trackedItems = trackedItems, })
 end
@@ -101,7 +104,7 @@ local selectedItem = nil
 local colGreen = ImVec4(0.409, 1.000, 0.409, 1.000)
 local colWhite = ImVec4(1, 1, 1, 1)
 local colYellow = ImVec4(1, 1, 0, 1)
-local function renderUI()
+function Module.RenderGUI()
 	if not showUI then return end
 	ImGui.SetNextWindowSize(ImVec2(600, 400), ImGuiCond.FirstUseEver)
 	local open, show = ImGui.Begin("Item Tracker##1", true, mainWindowFlags)
@@ -187,7 +190,6 @@ local function renderUI()
 	if not open then showUI = false end
 end
 
-
 -- Helper function to check if a table contains a value
 function TableContains(table, element)
 	for _, value in pairs(table) do
@@ -202,14 +204,26 @@ end
 local function init()
 	loadTrackedItems()
 	RegisterActors()
-	mq.imgui.init("itemTracker", renderUI)
+	if not loadedExeternally then
+		mq.imgui.init("itemTracker", Module.RenderGUI)
+	end
+	Module.IsRunning = true
 end
 
 
 init()
 local refreshTimer = os.clock()
 -- Main Script Loop
-while showUI do
+
+function Module.Unload()
+
+end
+
+function Module.MainLoop()
+	if loadedExeternally then
+		---@diagnostic disable-next-line: undefined-global
+		if not MyUI_LoadModules.CheckRunning(Module.IsRunning, Module.Name) then return end
+	end
 	if needRemove then
 		for item, _ in pairs(removedItems) do
 			for i, trackedItem in ipairs(trackedItems) do
@@ -223,6 +237,9 @@ while showUI do
 		removedItems = {}
 		needRemove = false
 		saveTrackedItems()
+	end
+	if not showUI then
+		Module.IsRunning = false
 	end
 	if needSave then
 		if tmpTxt ~= "" then
@@ -241,5 +258,16 @@ while showUI do
 		checkItems()
 		refreshTimer = os.clock()
 	end
-	mq.delay(10) -- Refresh every 3 seconds
 end
+
+function Module.LocalLoop()
+	while Module.IsRunning do
+		Module.MainLoop()
+		mq.delay(10) -- Adjust the delay as needed
+	end
+end
+
+if not loadedExeternally then
+	Module.LocalLoop()
+end
+return Module
