@@ -18,3 +18,5 @@ Searches use partial names. so you can search for `corroded plate` and find all 
 Removing or adding items on one character will update the other characters as well.
 
 Item counts update every 3 seconds.
+
+https://youtu.be/SlLVU2Ea7MM
