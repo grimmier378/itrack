@@ -1,14 +1,16 @@
 local mq                = require('mq')
 local ImGui             = require('ImGui')
 local Actors            = require('actors')
+local CommonUtils       = require('mq.Utils')
 
 local mailboxName       = "ItemTracker"
 local actor
 local trackedItems      = {}
 local itemData          = {}
-local showUI            = true
 local saveFileName      = mq.configDir .. "/itemtracker.lua"
 local mainWindowFlags   = bit32.bor(ImGuiWindowFlags.None)
+local buttonWinFlags    = bit32.bor(ImGuiWindowFlags.AlwaysAutoResize, ImGuiWindowFlags.NoTitleBar, ImGuiWindowFlags.NoCollapse)
+
 local removedItems      = {}
 local myName            = mq.TLO.Me.CleanName()
 
@@ -19,7 +21,51 @@ local Module            = {}
 local loadedExeternally = MyUI_ScriptName ~= nil
 Module.Name             = "iTrack"
 Module.IsRunning        = false
+Module.Settings         = {}
+Module.Server           = mq.TLO.EverQuest.Server()
+-- local animItems         = mq.FindTextureAnimation("A_DragItem")
+-- local animBox           = mq.FindTextureAnimation("A_RecessedBox")
+local animMini          = mq.FindTextureAnimation("A_DragItem")
+local EQ_ICON_OFFSET    = 500
+local configFile        = string.format("%s/MyUI/%s/%s/%s.lua", mq.configDir, Module.Name, Module.Server, myName)
+
+local defaults          = {
+	showUI = true,
+	lockWindow = false,
+}
+
+local function sortTrackedItems()
+	local tmp = {}
+	for _, item in ipairs(trackedItems) do
+		if item ~= "" then
+			table.insert(tmp, { name = item, })
+		end
+	end
+	table.sort(tmp, function(a, b) return a.name < b.name end)
+	trackedItems = {}
+	for _, item in ipairs(tmp) do
+		table.insert(trackedItems, item.name)
+	end
+end
+
+local function loadConfig()
+	if not CommonUtils.File.Exists(configFile) then
+		mq.pickle(configFile, defaults)
+		printf("\ayConfig file not found. Creating new config file: %s", configFile)
+	end
+	local config = dofile(configFile) or {}
+	if type(config) == "table" then
+		for k, v in pairs(defaults) do
+			if config[k] == nil then
+				config[k] = v
+			end
+		end
+	end
+	Module.Settings = config
+end
+
 local function saveTrackedItems()
+	sortTrackedItems()
 	mq.pickle(saveFileName, { trackedItems = trackedItems, })
 end
 
@@ -30,6 +76,7 @@ local function loadTrackedItems()
 			table.insert(trackedItems, item)
 		end
 	end
+	sortTrackedItems()
 end
 
 -- Register Actor
@@ -41,6 +88,8 @@ local function RegisterActors()
 		local items = received_message.Items or {}
 		local tracking = received_message.Tracking or {}
 		local remItem = received_message.Remove or nil
+
+		-- if we were told to remove an item do so.
 		if remItem ~= nil then
 			printf("\ayRemoving\ax Item:\at %s", remItem)
 			itemData[remItem] = nil
@@ -53,7 +102,12 @@ local function RegisterActors()
 			saveTrackedItems()
 			goto end_message
 		end
-		for _, itemName in ipairs(tracking) do
+		trackedItems = tracking
+		sortTrackedItems()
+
+		-- Add \ update the item data in the table. with the who and count information
+
+		for _, itemName in ipairs(trackedItems) do
 			if itemData[itemName] == nil then itemData[itemName] = {} end
 			if itemData[itemName][who] == nil then itemData[itemName][who] = {} end
 			if items[itemName] then
@@ -61,6 +115,8 @@ local function RegisterActors()
 				itemData[itemName][who].bank = items[itemName].bank
 			end
 		end
+
+		-- check and set has item flag if anyone has the itme for display purposes
 		for item, data in pairs(itemData) do
 			if type(data) == 'table' then
 				itemData[item].HasItem = false
@@ -73,12 +129,13 @@ local function RegisterActors()
 				end
 			end
 		end
+
+		-- Remove items that are no longer being tracked this is a redundant check incase we missed a message telling us to remove an item.
 		for itemName, v in pairs(itemData) do
-			if not TableContains(tracking, itemName) then
+			if not TableContains(trackedItems, itemName) then
 				itemData[itemName] = nil
 			end
 		end
-		trackedItems = tracking
 		::end_message::
 	end)
 end
@@ -104,10 +161,57 @@ local selectedItem = nil
 local colGreen = ImVec4(0.409, 1.000, 0.409, 1.000)
 local colWhite = ImVec4(1, 1, 1, 1)
 local colYellow = ImVec4(1, 1, 0, 1)
-function Module.RenderGUI()
-	if not showUI then return end
+
+local function renderBtn()
+	-- apply_style()
+	local winBtnFlags = Module.Settings.lockWindow and bit32.bor(ImGuiWindowFlags.NoMove, buttonWinFlags) or buttonWinFlags
+
+	local openBtn, showBtn = ImGui.Begin(string.format("Item Tracker##Mini"), true, winBtnFlags)
+	if not openBtn then
+		showBtn = false
+	end
+
+	if showBtn then
+		local cursorPosX, cursorPosY = ImGui.GetCursorScreenPos()
+		animMini:SetTextureCell(1147 - EQ_ICON_OFFSET)
+		ImGui.DrawTextureAnimation(animMini, 34, 34, true)
+		ImGui.SetCursorScreenPos(cursorPosX, cursorPosY)
+		ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0, 0, 0, 0))
+		ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.5, 0.5, 0, 0.5))
+		ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0, 0, 0, 0))
+		if ImGui.Button("##ItemTrackerBtn", ImVec2(34, 34)) then
+			Module.Settings.showUI = not Module.Settings.showUI
+			mq.pickle(configFile, Module.Settings)
+		end
+		ImGui.PopStyleColor(3)
+		-- if ImGui.IsItemHovered() then
+		-- 	if ImGui.IsMouseReleased(ImGuiMouseButton.Left) then
+		-- 		Module.Settings.showUI = not Module.Settings.showUI
+		-- 		mq.pickle(configFile, Module.Settings)
+		-- 	end
+		-- end
+	end
+	if ImGui.IsWindowHovered() then
+		ImGui.BeginTooltip()
+		ImGui.Text("Item Tracker")
+		ImGui.Text("Left-click to toggle UI")
+		ImGui.Text("Right-click for options")
+		ImGui.EndTooltip()
+	end
+	if ImGui.BeginPopupContextWindow("ItemTrackerContext") then
+		if ImGui.MenuItem(Module.Settings.lockWindow and "Unlock Window" or "Lock Window") then
+			Module.Settings.lockWindow = not Module.Settings.lockWindow
+			mq.pickle(configFile, Module.Settings)
+		end
+		ImGui.EndPopup()
+	end
+	ImGui.End()
+end
+
+local function renderMain()
 	ImGui.SetNextWindowSize(ImVec2(600, 400), ImGuiCond.FirstUseEver)
-	local open, show = ImGui.Begin("Item Tracker##1", true, mainWindowFlags)
+	local winFlags = Module.Settings.lockWindow and bit32.bor(ImGuiWindowFlags.NoMove, mainWindowFlags) or mainWindowFlags
+	local open, show = ImGui.Begin("Item Tracker##1", true, winFlags)
 	if not open then show = false end
 	if show then
 		-- Add Item UI
@@ -187,7 +291,18 @@ function Module.RenderGUI()
 		ImGui.EndChild()
 	end
 	ImGui.End()
-	if not open then showUI = false end
+	if not open then
+		Module.Settings.showUI = false
+		mq.pickle(configFile, Module.Settings)
+	end
+end
+
+function Module.RenderGUI()
+	renderBtn()
+
+	if Module.Settings.showUI then
+		renderMain()
+	end
 end
 
 -- Helper function to check if a table contains a value
@@ -202,21 +317,68 @@ end
 
 -- Load tracked items from previous session
 local function init()
+	loadConfig()
 	loadTrackedItems()
 	RegisterActors()
 	if not loadedExeternally then
 		mq.imgui.init("itemTracker", Module.RenderGUI)
 	end
+	mq.bind("/itrack", Module.CommandHandler)
 	Module.IsRunning = true
+	Module.PrintHelp()
+	checkItems()
 end
 
+function Module.CommandHandler(...)
+	local args = { ..., }
+	if args[1] == "show" then
+		Module.Settings.showUI = true
+		mq.pickle(configFile, Module.Settings)
+	elseif args[1] == "hide" then
+		Module.Settings.showUI = false
+		mq.pickle(configFile, Module.Settings)
+	elseif args[1] == "add" and args[2] then
+		tmpTxt = args[2]
+		needSave = true
+	elseif args[1] == "remove" and args[2] then
+		removedItems[args[2]:lower()] = true
+		needRemove = true
+	elseif args[1] == "list" then
+		if #trackedItems > 0 then
+			printf("\ayTracked Items:")
+			for _, item in ipairs(trackedItems) do
+				printf("\at- %s", item)
+			end
+		else
+			printf("\ayNo items are being tracked.")
+		end
+	elseif args[1] == "help" then
+		Module.PrintHelp()
+	elseif args[1] == 'quit' then
+		Module.IsRunning = false
+		Module.Unload()
+	else
+		printf("\ayInvalid command.")
+		Module.PrintHelp()
+	end
+end
+
+function Module.PrintHelp()
+	printf("\ay/itrack show \ax- Show the item tracker UI")
+	printf("\ay/itrack hide \ax- Hide the item tracker UI")
+	printf("\ay/itrack add <item> \ax- Add an item to track")
+	printf("\ay/itrack remove <item> \ax- Remove an item from tracking")
+	printf("\ay/itrack list \ax- List all tracked items")
+end
 
 init()
 local refreshTimer = os.clock()
 -- Main Script Loop
 
 function Module.Unload()
-
+	mq.unbind("/itrack")
+	actor = nil
+	Module.IsRunning = false
 end
 
 function Module.MainLoop()
@@ -227,9 +389,9 @@ function Module.MainLoop()
 	if needRemove then
 		for item, _ in pairs(removedItems) do
 			for i, trackedItem in ipairs(trackedItems) do
-				if trackedItem == item then
+				if trackedItem == item or trackedItem:lower() == item:lower() then
 					table.remove(trackedItems, i)
-					actor:send({ mailbox = mailboxName, }, { Items = {}, Sender = myName, Tracking = {}, Remove = item, })
+					actor:send({ mailbox = mailboxName, }, { Items = {}, Sender = myName, Tracking = {}, Remove = trackedItem, })
 					break
 				end
 			end
@@ -238,9 +400,7 @@ function Module.MainLoop()
 		needRemove = false
 		saveTrackedItems()
 	end
-	if not showUI then
-		Module.IsRunning = false
-	end
+
 	if needSave then
 		if tmpTxt ~= "" then
 			if not TableContains(trackedItems, tmpTxt) then
